@@ -5,6 +5,7 @@ import {
   BarChart, Bar,
 } from "recharts";
 import { motion } from "framer-motion";
+import { Cloud } from "lucide-react";   
 import { co2Zone } from "../utils/co2";
 
 /* =========================
@@ -24,19 +25,6 @@ const monthData = [
   { name: "1월", v: 900 }, { name: "2월", v: 500 }, { name: "3월", v: 1300 },
   { name: "4월", v: 800 }, { name: "5월", v: 700 },
 ];
-
-/* =========================
-   Figma 스타일 구름 뱃지
-========================= */
-function CloudBadge({ color }) {
-  return (
-    <div className="relative w-24 h-14">
-      <div className="absolute inset-0 rounded-full" style={{ background: color }} />
-      <div className="absolute -left-3 top-2 w-8 h-8 rounded-full" style={{ background: color }} />
-      <div className="absolute right-[-6px] top-2 w-9 h-9 rounded-full" style={{ background: color }} />
-    </div>
-  );
-}
 
 /* =========================
    스와이프 훅 (모바일/데스크탑)
@@ -171,7 +159,14 @@ export default function Co2() {
             {zone.label}
           </span>
         </div>
-        <CloudBadge color={zone.color} />
+
+        {/* 구름 아이콘 */}
+        <Cloud
+          size={90}                            // ← 글자 크기에 맞게 큼직하게
+          strokeWidth={2.5}
+          style={{ color: zone.color, fill: zone.color }}   // ← 내부 채움 + 스트로크 색
+          aria-label="CO2 상태"
+        />
       </section>
     </div>
   );
