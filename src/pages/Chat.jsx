@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Send, Mic, Bot, User } from "lucide-react";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
+// const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
 const DEFAULT_CAR_MODEL = "아반떼";
+const API_BASE = "";
 
 /** 짧은 문장은 알약(Pill) 형태로 렌더링 */
 const isShort = (t) => t.length <= 12 && !t.includes("\n");
@@ -98,7 +99,8 @@ export default function Chat() {
 
   // ----- 공통: 백엔드 호출 -----
   async function callAsk(question, carModel) {
-    const res = await fetch(`${API_URL}/api/ask`, {
+    // const res = await fetch(`${API_URL}/api/ask`, {
+    const res = await fetch(`${API_BASE}/api/ask`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ question, carModel }),
@@ -181,9 +183,13 @@ export default function Chat() {
         const ext = type.includes("ogg") ? "ogg" : type.includes("wav") ? "wav" : "webm";
         const fd = new FormData();
         fd.append("file", blob, `voice.${ext}`);
+        fd.append("file", blob, "input.webm"); // 추가한거
 
         try {
-          const res = await fetch(`${API_URL}/api/voice`, { method: "POST", body: fd });
+          // const res = await fetch(`${API_URL}/api/voice`, {
+          const res = await fetch(`${API_BASE}/api/voice`, {   
+            method: "POST", body: fd 
+          });
           if (!res.ok) throw new Error(`VOICE HTTP ${res.status}`);
           const data = await res.json();
 
