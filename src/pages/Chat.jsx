@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Send, Mic, Bot, User } from "lucide-react";
 
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
+const DEFAULT_CAR_MODEL = "아반떼";
+
 /** 짧은 문장은 알약(Pill) 형태로 렌더링 */
 const isShort = (t) => t.length <= 12 && !t.includes("\n");
 
@@ -39,7 +42,7 @@ function Row({ me, text }) {
         return bullet ? (
           <div key={i} className="flex gap-2">
             <span className="mt-[9px] h-[6px] w-[6px] rounded-full bg-sub/80" />
-            <span>{line.replace(/^-\\s*/, "")}</span>
+            <span>{line.replace(/^-\\s*/, "").replace(/^-\s*/, "")}</span>
           </div>
         ) : (
           <p key={i} className="whitespace-pre-wrap">{line}</p>
@@ -67,17 +70,17 @@ function Row({ me, text }) {
 
 export default function Chat() {
   const [messages, setMessages] = useState([
-    { me: false, text: "무엇을 도와드릴까요?\n예: ‘내일 비 오면 환기 알림 설정해줘’" },
+    { me: false, text: "무엇을 도와드릴까요?\n예: ‘엔진 경고등이 켜졌어요’" },
   ]);
   const [input, setInput] = useState("");
   const [recording, setRecording] = useState(false);
-  const [sending, setSending] = useState(false);
+  const [sending, setSending] = useState(false); // 텍스트 전송 중
   const endRef = useRef(null);
 
-  // ====== 자동 종료 설정 ======
-  const SILENCE_THRESHOLD = 0.015; // 0~1 (작을수록 민감) 권장 0.01~0.03
-  const SILENCE_MS = 1200;         // 이 시간 이상 무음이면 자동 종료 (ms)
-  const MAX_RECORD_MS = 15000;     // 최대 녹음 길이 하드캡 (ms)
+  // ====== 음성 자동 종료 설정 ======
+  const SILENCE_THRESHOLD = 0.015; // 0~1
+  const SILENCE_MS = 1200;         // 무음 지속 시 자동 정지
+  const MAX_RECORD_MS = 15000;     // 최대 녹음 길이
 
   // 녹음/무음감지 레퍼런스
   const mediaRecRef = useRef(null);
@@ -91,13 +94,60 @@ export default function Chat() {
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, sending, recording]);
 
+  // ----- 공통: 백엔드 호출 -----
+  async function callAsk(question, carModel) {
+    const res = await fetch(`${API_URL}/api/ask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question, carModel }),
+    });
+    if (!res.ok) throw new Error(`ASK HTTP ${res.status}`);
+    const data = await res.json();
+    return data.answer ?? "(응답이 비어 있습니다)";
+  }
+
+  // ----- 텍스트 전송 (자리표시 “생각 중…” 교체) -----
+  const send = async () => {
+    const text = input.trim();
+    if (!text || sending || recording) return;
+
+    // 사용자 메시지 + 자리표시
+    setMessages((prev) => [...prev, { me: true, text }, { me: false, text: "생각 중…" }]);
+    setInput("");
+    setSending(true);
+
+    try {
+      const answer = await callAsk(text, DEFAULT_CAR_MODEL);
+      setMessages((prev) => {
+        const next = [...prev];
+        next[next.length - 1] = { me: false, text: answer }; // 자리표시 교체
+        return next;
+      });
+    } catch (err) {
+      setMessages((prev) => {
+        const next = [...prev];
+        next[next.length - 1] = {
+          me: false,
+          text:
+            "서버 연결에 실패했습니다. 백엔드 실행과 VITE_API_URL 설정을 확인해주세요.",
+        };
+        return next;
+      });
+    } finally {
+      setSending(false);
+    }
+  };
+
+  // ===== 음성 입력 =====
   const pickMime = () => {
-  if (window.MediaRecorder?.isTypeSupported("audio/ogg;codecs=opus"))  return "audio/ogg;codecs=opus";
-  if (window.MediaRecorder?.isTypeSupported("audio/webm;codecs=opus")) return "audio/webm;codecs=opus";
-  return ""; // 브라우저가 결정
-};
+    if (window.MediaRecorder?.isTypeSupported("audio/ogg;codecs=opus"))
+      return "audio/ogg;codecs=opus";
+    if (window.MediaRecorder?.isTypeSupported("audio/webm;codecs=opus"))
+      return "audio/webm;codecs=opus";
+    return "";
+  };
 
   const startRecording = async () => {
     try {
@@ -125,32 +175,42 @@ export default function Chat() {
         const type = mr.mimeType || "audio/webm";
         const blob = new Blob(chunksRef.current, { type });
 
-        // (선택) 사용자 발화 표시
-        setMessages((prev) => [...prev, { me: true, text: "🎤 (음성 메시지 전송)" }]);
+        // 사용자 음성 전송 표시
+        setMessages((prev) => [...prev, { me: true, text: "🎤 (음성 메시지 전송)" }, { me:false, text:"생각 중…" }]);
 
         const ext = type.includes("ogg") ? "ogg" : type.includes("wav") ? "wav" : "webm";
         const fd = new FormData();
         fd.append("file", blob, `voice.${ext}`);
 
         try {
-          const res = await fetch("/api/voice", { method: "POST", body: fd });
+          const res = await fetch(`${API_URL}/api/voice`, { method: "POST", body: fd });
+          if (!res.ok) throw new Error(`VOICE HTTP ${res.status}`);
           const data = await res.json();
-          setMessages((prev) => [
-            ...prev,
-            { me: false, text: `📝 인식: ${data.text}` },
-            { me: false, text: data.answer || "(응답 없음)" },
-          ]);
+
+          // 자리표시 교체: 인식 결과 + 답변
+          setMessages((prev) => {
+            const next = [...prev];
+            // 마지막(자리표시) 교체
+            next[next.length - 1] = { me: false, text: `📝 인식: ${data.text ?? ""}` };
+            // 답변 추가
+            next.push({ me: false, text: data.answer || "(응답 없음)" });
+            return next;
+          });
         } catch (err) {
-          setMessages((prev) => [...prev, { me: false, text: "음성 전송 실패: " + String(err) }]);
+          setMessages((prev) => {
+            const next = [...prev];
+            next[next.length - 1] = { me: false, text: "음성 전송 실패: " + String(err) };
+            return next;
+          });
         }
       };
 
-      // ★ 핵심: timeslice 지정 → 마지막 덩어리 유실 방지
-      mr.start(250); // 250ms 주기로 dataavailable 발생
+      // data 유실 방지용 timeslice
+      mr.start(250);
       mediaRecRef.current = mr;
       setRecording(true);
 
-      // ===== 무음 감지 세팅 (Web Audio API) =====
+      // 무음 감지
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       audioCtxRef.current = new AudioCtx();
       const source = audioCtxRef.current.createMediaStreamSource(stream);
@@ -167,7 +227,7 @@ export default function Chat() {
         const data = new Uint8Array(n);
         a.getByteTimeDomainData(data);
 
-        // RMS 계산 (0~1)
+        // RMS(0~1)
         let sum = 0;
         for (let i = 0; i < n; i++) {
           const v = (data[i] - 128) / 128;
@@ -176,10 +236,7 @@ export default function Chat() {
         const rms = Math.sqrt(sum / n);
 
         const now = performance.now();
-        if (rms > SILENCE_THRESHOLD) {
-          lastNonSilentRef.current = now; // 소리 감지됨
-        }
-        // 지정 시간 이상 무음이면 자동 정지
+        if (rms > SILENCE_THRESHOLD) lastNonSilentRef.current = now;
         if (now - lastNonSilentRef.current > SILENCE_MS) {
           stopRecording(true);
           return;
@@ -188,7 +245,7 @@ export default function Chat() {
       };
       rafRef.current = requestAnimationFrame(detect);
 
-      // 하드캡(최대 녹음 길이)
+      // 최대 녹음 길이 하드캡
       autoStopTimerRef.current = setTimeout(() => stopRecording(true), MAX_RECORD_MS);
     } catch (err) {
       setMessages((prev) => [...prev, { me: false, text: "마이크 권한을 허용해 주세요." }]);
@@ -196,50 +253,17 @@ export default function Chat() {
     }
   };
 
-  const stopRecording = (auto = false) => {
+  const stopRecording = () => {
     const mr = mediaRecRef.current;
     if (!mr || isStoppingRef.current) return;
     isStoppingRef.current = true;
     try {
-      // data 플러시 후 정지
       try { mr.requestData && mr.requestData(); } catch {}
       if (mr.state !== "inactive") mr.stop();
-      // 스트림 종료
       mr.stream.getTracks().forEach((t) => t.stop());
     } finally {
       mediaRecRef.current = null;
       setRecording(false);
-    }
-  };
-
-  const send = async () => {
-    const text = input.trim();
-    if (!text || sending) return;
-
-    // 1) 내 메시지 추가
-    setMessages((prev) => [...prev, { me: true, text }]);
-    setInput("");
-    setSending(true);
-
-    try {
-      // 2) 백엔드 호출
-      const res = await fetch("/api/ask", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: text }), // carModel 필요하면 함께 전송
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-
-      // 3) 봇 응답 추가
-      setMessages((prev) => [...prev, { me: false, text: data?.answer ?? "응답 없음" }]);
-    } catch (err) {
-      setMessages((prev) => [
-        ...prev,
-        { me: false, text: `서버 연결 실패: ${String(err.message || err)}` },
-      ]);
-    } finally {
-      setSending(false);
     }
   };
 
@@ -265,10 +289,10 @@ export default function Chat() {
       {/* 하단 입력 바 */}
       <footer className="px-6 pb-6">
         <div className="bg-panel border border-white/10 rounded-full h-14 px-3 flex items-center gap-1">
-          {/* 마이크 버튼: 녹음 토글 */}
+          {/* 마이크 버튼 */}
           <button
             type="button"
-            onClick={recording ? () => stopRecording(false) : startRecording}
+            onClick={recording ? () => stopRecording() : startRecording}
             aria-pressed={recording}
             title={recording ? "녹음 중지" : "음성 입력"}
             className={`h-10 w-10 rounded-full flex items-center justify-center transition ${
@@ -288,11 +312,7 @@ export default function Chat() {
               }
             }}
             placeholder={
-              recording
-                ? "녹음 중..."
-                : sending
-                ? "응답 대기 중..."
-                : "메시지를 입력하세요"
+              recording ? "녹음 중..." : sending ? "응답 대기 중..." : "메시지를 입력하세요"
             }
             disabled={sending || recording}
             className="flex-1 bg-transparent outline-none text-[16px] text-text placeholder:text-sub/70 px-2"
@@ -302,8 +322,8 @@ export default function Chat() {
             onClick={send}
             disabled={sending || recording}
             className={`h-10 w-10 rounded-full ${
-              sending ? "bg-accent/50" : "bg-accent"
-            } text-black flex items-center justify-center font-semibold hover:opacity-90 transition`}
+              sending ? "bg-accent/50" : "bg-accent hover:opacity-90"
+            } text-black flex items-center justify-center font-semibold transition`}
             title="전송"
             aria-label="전송"
           >
