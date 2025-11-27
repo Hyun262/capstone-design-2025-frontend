@@ -25,7 +25,6 @@ export default function Sidebar() {
         <Item to="/" label="홈"><Home size={28} /></Item>
         <Item to="/chat" label="채팅"><MessageSquare size={26} /></Item>
         <Item to="/co2" label="이산화탄소"><Cloud size={28} /></Item>
-        <Item to="/shop" label="쇼핑"><ShoppingCart size={26} /></Item>
         <div className="flex-1" />
         <Item to="/" label="뒤로"><ArrowLeft size={26} /></Item>
 
